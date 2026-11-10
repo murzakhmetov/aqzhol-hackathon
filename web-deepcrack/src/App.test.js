@@ -1,8 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+test('renders the upload form and heading', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  expect(screen.getByText(/Crack Detection using DeepCrack/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /predict/i })).toBeInTheDocument();
 });

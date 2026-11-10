@@ -1,10 +1,7 @@
-
-import os
 import cv2
 import torch
 import numpy as np
 from PIL import Image
-from io import BytesIO
 from .cv2_utils import getContours
 import torchvision.transforms as transforms
 from .models.deepcrack_model import DeepCrackModel
@@ -28,10 +25,6 @@ def tensor2im(input_image, imtype=np.uint8):
     else:  
         image_numpy = input_image
     return image_numpy.astype(imtype)
-
-def bytes_to_array(b: bytes) -> np.ndarray:
-    np_bytes = BytesIO(b)
-    return np.load(np_bytes, allow_pickle=True)
 
 def read_image(bytesImg, dim=(256, 256)):
     img_transforms = transforms.Compose([transforms.ToTensor(),
@@ -93,11 +86,8 @@ def inference(model, bytesImg, dim, unit):
 
     for key in visuals.keys():
         visuals[key] = tensor2im(visuals[key])
-    h, w, _ = visuals['fused'].shape
-    fused = Image.fromarray(visuals['fused'])
-    fused = np.array(fused, dtype='uint8')
-    realHeight=dim[1]
-    realWidth=dim[0]
+    fused = visuals['fused']
+    realWidth, realHeight = dim
 
     mask = cv2.cvtColor(fused, cv2.COLOR_BGR2GRAY)
     mask[mask < 90] = 0
@@ -109,5 +99,5 @@ def inference(model, bytesImg, dim, unit):
     cv2.drawContours(image=overlay_img, contours=cnts[0], contourIdx=-1, color=(0, 255, 0), thickness=1, lineType=cv2.LINE_AA)
     contour_img = getContours(fused, overlay_img, realHeight, realWidth, unit, confidence)
 
-    return contour_img if contour_img is not None else overlay_img, visuals
+    return contour_img, visuals
 

@@ -3,19 +3,21 @@ import io
 import json
 import uuid
 import base64
+import threading
 import traceback
+from collections import deque
 from datetime import datetime
-from typing import Union, List, Optional
+from typing import List
 
 import cv2
-import torch
 import numpy as np
 from PIL import Image
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, JSONResponse, Response
+from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from util.inference_utils import inference, create_model
 from dotenv import load_dotenv
@@ -69,9 +71,20 @@ parameters = Parameters()
 model = create_model(parameters)
 print(" DeepCrack model loaded!")
 
+# DeepCrackModel keeps per-call state (set_input -> test -> get_current_visuals),
+# so inference calls running in the threadpool must not overlap.
+model_lock = threading.Lock()
 
 
-analysis_history: list = []
+def run_inference(bytesImg: bytes, dim: tuple, unit: str):
+    with model_lock:
+        return inference(model, bytesImg, dim, unit)
+
+
+
+# Records include base64 images, so keep only the most recent analyses in memory.
+MAX_HISTORY = int(os.getenv("MAX_HISTORY", "50"))
+analysis_history: deque = deque(maxlen=MAX_HISTORY)
 
 
 
@@ -101,7 +114,7 @@ def sanitize_for_json(obj):
     return obj
 
 
-def check_cracks_detected(visuals: dict, threshold: float = 0.15) -> tuple:
+def check_cracks_detected(visuals: dict) -> tuple:
     
     fused = visuals['fused']
     if len(fused.shape) == 3:
@@ -248,7 +261,8 @@ async def analyze_road(
 
     try:
         bytesImg = await file.read()
-        contour_img, visuals = inference(model, bytesImg, (width, height), unit)
+        # inference is CPU/GPU-bound and synchronous; keep it off the event loop.
+        contour_img, visuals = await run_in_threadpool(run_inference, bytesImg, (width, height), unit)
         cracks_detected, crack_ratio = check_cracks_detected(visuals)
         original_b64 = base64.b64encode(bytesImg).decode('ascii')
         result_b64 = image_to_base64(contour_img)
@@ -291,20 +305,8 @@ async def analyze_road(
 @app.get("/history")
 def get_history():
     
-    history_light = []
-    for r in reversed(analysis_history):
-        history_light.append({
-            "id": r["id"],
-            "timestamp": r["timestamp"],
-            "filename": r["filename"],
-            "location": r["location"],
-            "notes": r["notes"],
-            "dimensions": r["dimensions"],
-            "cracks_detected": r["cracks_detected"],
-            "crack_coverage_percent": r["crack_coverage_percent"],
-            "analysis": r["analysis"]
-        })
-    return history_light
+    # Everything except the (large) base64 images.
+    return [{k: v for k, v in r.items() if k != "images"} for r in reversed(analysis_history)]
 
 
 @app.get("/history/{analysis_id}")
